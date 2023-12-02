@@ -1,0 +1,135 @@
+From flask import Flask, request
+From flask_restful import Api, Resource
+From flask_sqlalchemy import SQLAlchemy
+From flask_bcrypt import Bcrypt
+From flask_jwt_extended import JWTManager, create_access_token, 
+jwt_required, get_jwt_identity
+App = Flask(__name__)
+App.config[‘SQLALCHEMY_DATABASE_URI’] = ‘sqlite:///notes.db’
+App.config[‘SQLALCHEMY_TRACK_MODIFICATIONS’] = False
+App.config[‘SECRET_KEY’] = ‘your-secret-key’ # Change this to a strong, unique 
+key
+Api = Api(app)
+Db = SQLAlchemy(app)
+Bcrypt = Bcrypt(app)
+Jwt = JWTManager(app)
+# User Model
+Class User(db.Model):
+ Id = db.Column(db.Integer, primary_key=True)
+ Username = db.Column(db.String(50), unique=True, nullable=False)
+ Password = db.Column(db.String(60), nullable=False)
+ Notes = db.relationship(‘Note’, backref=’owner’, lazy=True)
+# Note Model
+Class Note(db.Model):
+ Id = db.Column(db.Integer, primary_key=True)
+ Title = db.Column(db.String(100), nullable=False)
+ Content = db.Column(db.Text, nullable=False)
+ User_id = db.Column(db.Integer, db.ForeignKey(‘user.id’), nullable=False)
+ Shared_users = db.relationship(‘SharedNote’, backref=’note’, lazy=True)
+# Shared Note Model
+Class SharedNote(db.Model):
+ Id = db.Column(db.Integer, primary_key=True)
+ Note_id = db.Column(db.Integer, db.ForeignKey(‘note.id’), nullable=False)
+ Shared_user_id = db.Column(db.Integer, db.ForeignKey(‘user.id’), 
+nullable=False)
+# Create the database tables
+Db.create_all()
+# User Registration Resource
+Class UserRegistration(Resource):
+ Def post(self):
+ Data = request.get_json()
+ Hashed_password = 
+bcrypt.generate_password_hash(data[‘password’]).decode(‘utf-8’)
+ New_user = User(username=data[‘username’], 
+password=hashed_password)
+ Db.session.add(new_user)
+ Db.session.commit()
+ Return {‘message’: ‘User created successfully’}, 201
+# User Login Resource
+Class UserLogin(Resource):
+ Def post(self):
+ Data = request.get_json()
+ User = User.query.filter_by(username=data[‘username’]).first()
+ If user and bcrypt.check_password_hash(user.password, 
+data[‘password’]):
+ Access_token = create_access_token(identity=user.id)
+ Return {‘access_token’: access_token}
+ Else:
+ Return {‘message’: ‘Invalid credentials’}, 401
+# Note Resource
+Class NoteResource(Resource):
+ @jwt_required()
+ Def get(self):
+ Current_user = get_jwt_identity()
+ User_notes = Note.query.filter_by(user_id=current_user).all()
+ Notes = [{‘id’: note.id, ‘title’: note.title, ‘content’: note.content} for note in 
+user_notes]
+ Return {‘notes’: notes}
+ @jwt_required()
+ Def post(self):
+ Current_user = get_jwt_identity()
+ Data = request.get_json()
+ New_note = Note(title=data[‘title’], content=data[‘content’], 
+user_id=current_user)
+ Db.session.add(new_note)
+ Db.session.commit()
+ Return {‘message’: ‘Note created successfully’}, 201
+Class SingleNoteResource(Resource):
+ @jwt_required()
+ Def get(self, note_id):
+ Current_user = get_jwt_identity()
+ Note = Note.query.filter_by(id=note_id, user_id=current_user).first()
+ If note:
+ Return {‘id’: note.id, ‘title’: note.title, ‘content’: note.content}
+ Else:
+ Return {‘message’: ‘Note not found or unauthorized access’}, 404
+ @jwt_required()
+ Def put(self, note_id):
+ Current_user = get_jwt_identity()
+ Data = request.get_json()
+ Note = Note.query.filter_by(id=note_id, user_id=current_user).first()
+ If note:
+ Note.title = data[‘title’]
+ Note.content = data[‘content’]
+ Db.session.commit()
+ Return {‘message’: ‘Note updated successfully’}
+ Else:
+ Return {‘message’: ‘Note not found or unauthorized access’}, 404
+ @jwt_required()
+ Def delete(self, note_id):
+ Current_user = get_jwt_identity()
+ Note = Note.query.filter_by(id=note_id, user_id=current_user).first()
+ If note:
+ Db.session.delete(note)
+ Db.session.commit()
+ Return {‘message’: ‘Note deleted successfully’}
+ Else:
+ Return {‘message’: ‘Note not found or unauthorized access’}, 404
+# Shared Note Resource
+Class SharedNoteResource(Resource):
+ @jwt_required()
+ Def post(self, note_id):
+ Current_user = get_jwt_identity()
+ Data = request.get_json()
+ Shared_user = User.query.filter_by(username=data[‘username’]).first()
+ If shared_user:
+ Note = Note.query.filter_by(id=note_id, user_id=current_user).first()
+ If note:
+ Shared_note = SharedNote(note_id=note_id, 
+shared_user_id=shared_user.id)
+ Db.session.add(shared_note)
+ Db.session.commit()
+ Return {‘message’: ‘Note shared successfully’}
+ Else:
+ Return {‘message’: ‘Note not found or unauthorized access’}, 404
+ Else:
+ Return {‘message’: ‘User not found’}, 404
+# Add resources to the API
+Api.add_resource(UserRegistration, ‘/register’)
+Api.add_resource(UserLogin, ‘/login’)
+Api.add_resource(NoteResource, ‘/notes’)
+Api.add_resource(SingleNoteResource, ‘/notes/<int:note_id>’)
+Api.add_resource(SharedNoteResource, ‘/notes/<int:note_id>/share’)
+# Run the app
+If __name__ == ‘__main__’:
+ App.run(debug=True
